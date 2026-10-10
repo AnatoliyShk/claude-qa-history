@@ -1,4 +1,4 @@
-# qa-history
+# claude-qa-history
 
 A Claude Code plugin that keeps your questions and Claude's answers in a side pane, and quizzes you on the last one.
 
@@ -9,8 +9,8 @@ A Claude Code plugin that keeps your questions and Claude's answers in a side pa
 ## Install
 
 ```
-/plugin marketplace add AnatoliyShk/qa-history
-/plugin install qa-history@qa-history
+/plugin marketplace add AnatoliyShk/claude-qa-history
+/plugin install qa-history@claude-qa-history
 ```
 
 ## Commands and shortcuts
