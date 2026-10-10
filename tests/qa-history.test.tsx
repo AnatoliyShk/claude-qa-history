@@ -149,7 +149,10 @@ test('Ask and Explain work on the selected text and land in the history', async 
   // the band's Explain sends at once
   selection = { text: 'hoisting' }
   const bandProps = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 }, view: {} }
-  const band = await $.ui.mount({ plugin: 'qa-history', surface: 'desktop', component: 'AbovePrompt', props: bandProps })
+  const desktopBand = await $.ui.mount({ plugin: 'qa-history', surface: 'desktop', component: 'AbovePrompt', props: bandProps })
+  expect(await desktopBand.find({ key: 'qa-ask' })).toBeUndefined() // the desktop reports no selection
+  expect(await desktopBand.find({ key: 'qa-explain' })).toBeUndefined()
+  const band = await $.ui.mount({ plugin: 'qa-history', surface: 'terminal', component: 'AbovePrompt', props: bandProps })
   await band.press({ key: 'qa-explain' })
   expect(submitted.at(-1)).toEqual({ text: 'Explain this: hoisting', kind: 'plugin' })
   selection = undefined

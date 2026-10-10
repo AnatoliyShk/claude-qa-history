@@ -387,6 +387,7 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const isOn = await read($, isEnabled)
     const isConfirming = await read($, isConfirmingClear)
+    const isTerminal = e.surface === 'terminal'
 
     return (
       <Box gap={1} width="100%">
@@ -400,21 +401,24 @@ export const register: Register = on => {
           onPress={async () => $.ui.toast(await startQuiz($))}
         />
         <Button key="qa-clear" label={isConfirming ? 'Really clear?' : 'Clear'} variant="secondary" hotkey={isOn ? 'c' : undefined} onPress={() => clearHistory($)} />
-        <Button key="qa-ask" label="Ask" variant="secondary" hotkey={isOn ? 'a' : undefined} onPress={async () => $.ui.toast(await askAboutSelection($))} />
-        <Button
-          key="qa-explain"
-          label="Explain"
-          variant="secondary"
-          hotkey={isOn ? 'e' : undefined}
-          onPress={async () => {
-            const question = await explainQuestion($)
-            if (question === undefined) $.ui.toast(NO_SELECTION)
-            else await sendExplain($, question)
-          }}
-        />
+        {/* only the terminal reports a mouse selection; the desktop app answers none */}
+        {isTerminal && <Button key="qa-ask" label="Ask" variant="secondary" hotkey={isOn ? 'a' : undefined} onPress={async () => $.ui.toast(await askAboutSelection($))} />}
+        {isTerminal && (
+          <Button
+            key="qa-explain"
+            label="Explain"
+            variant="secondary"
+            hotkey={isOn ? 'e' : undefined}
+            onPress={async () => {
+              const question = await explainQuestion($)
+              if (question === undefined) $.ui.toast(NO_SELECTION)
+              else await sendExplain($, question)
+            }}
+          />
+        )}
         {isConfirming && <Button key="qa-clear-cancel" label="Keep" variant="secondary" onPress={() => update($, isConfirmingClear, () => false)} />}
         {/* keybindings.json chords reach the terminal only; elsewhere q works once the band has the focus */}
-        <Text dimColor>{e.surface === 'terminal' ? (isOn ? `${TOGGLE_SHORTCUT} toggle, ${QUIZ_SHORTCUT} quiz, ${CLEAR_SHORTCUT} clear, ${ASK_SHORTCUT} ask` : 'shortcuts off') : 'click the band for keyboard control'}</Text>
+        <Text dimColor>{isTerminal ? (isOn ? `${TOGGLE_SHORTCUT} toggle, ${QUIZ_SHORTCUT} quiz, ${CLEAR_SHORTCUT} clear, ${ASK_SHORTCUT} ask` : 'shortcuts off') : 'click the band for keyboard control'}</Text>
         <Box flexGrow={1} />
         {/* plain one-glyph label: drawn as a bare cross */}
         <Button key="qa-band-close" label="✕" plain role="dismiss" onPress={() => update($, isBandHidden, () => true)} />
