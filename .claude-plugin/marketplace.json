@@ -1,0 +1,14 @@
+{
+  "name": "qa-history",
+  "description": "Q&A history and quizzes for Claude Code",
+  "owner": {
+    "name": "Anatoliy Shekera"
+  },
+  "plugins": [
+    {
+      "name": "qa-history",
+      "source": "./",
+      "description": "Keeps your questions, answers and follow-up Q&A in a side pane; /qa-testme quizzes you on the last one"
+    }
+  ]
+}

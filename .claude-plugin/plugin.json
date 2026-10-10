@@ -1,0 +1,1 @@
+{"name": "qa-history", "version": "0.5.0", "description": "Keeps your questions, answers and follow-up Q&A in a side pane; /qa-testme quizzes you on the last one", "author": {"name": "Anatoliy Shekera"}, "types": "./types/index.d.ts"}
