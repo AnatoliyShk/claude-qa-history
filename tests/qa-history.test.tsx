@@ -48,6 +48,7 @@ test('toggling adds and removes only its own keybindings', () => {
     'alt+c': 'command:other',
     'alt+q': 'command:qa-toggle',
     'alt+t': 'command:qa-testme',
+    'alt+s': 'command:qa-ask',
   })
   const turnedOff = withQaBindings(turnedOn.text, false)
   expect(JSON.parse(turnedOff.text)).toEqual(JSON.parse(userFile))
@@ -107,6 +108,69 @@ test('a long history is cut to its newest cards for the quiz', () => {
   expect(quizItemCount(25)).toBe(60) // capped
 })
 
+test('Ask and Explain work on the selected text and land in the history', async ($, on) => {
+  const submitted: { text: string; kind: string }[] = []
+  on('prompt.submit', (_$, e) => {
+    submitted.push({ text: e.text, kind: e.origin.kind })
+    return { text: e.text }
+  })
+  const filled: string[] = []
+  on('prompt.fill', (_$, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  let selection: { text: string } | undefined
+  on('ui.selection', () => ({ value: selection }))
+  const run = (command: string) =>
+    $.command.run({ command, args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+
+  expect((await run('qa-ask')).text).toBe('Select some text first.')
+  expect((await run('qa-explain')).text).toBe('Select some text first.')
+  expect(filled).toEqual([])
+
+  selection = { text: '  a closure keeps its scope \n' }
+  await run('qa-ask')
+  expect(filled).toEqual(['About "a closure keeps its scope": '])
+  // what the person then sends is recorded, though it isn't phrased as a question
+  await $.prompt.submit({ text: 'About "a closure keeps its scope": give an example', wait: false, origin: { kind: 'composer' } })
+
+  // /qa-explain sends once its own turn is over
+  await run('qa-explain')
+  expect(submitted.length).toBe(1)
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  expect(submitted.at(-1)).toEqual({ text: 'Explain this: a closure keeps its scope', kind: 'plugin' })
+
+  // the band's Explain sends at once
+  selection = { text: 'hoisting' }
+  const bandProps = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+  const band = await $.ui.mount({ plugin: 'qa-history', surface: 'desktop', component: 'AbovePrompt', props: bandProps })
+  await band.press({ key: 'qa-explain' })
+  expect(submitted.at(-1)).toEqual({ text: 'Explain this: hoisting', kind: 'plugin' })
+  selection = undefined
+  await band.press({ key: 'qa-explain' })
+  expect(toasts.at(-1)).toBe('Select some text first.')
+
+  const history = await $.ui.mount({
+    plugin: 'qa-history',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'qa-history',
+    props: paneProps('Q&A history'),
+  })
+  const questionLabels = (await history.findAll({ type: 'Client' })).map(toggle => (toggle.props.props as { label: string }).label)
+  expect(questionLabels).toEqual([
+    ' ▾ Q: Explain this: hoisting ',
+    ' ▾ Q: Explain this: a closure keeps its scope ',
+    ' ▾ Q: About "a closure keeps its scope": give an example ',
+  ]) // newest first, recorded once each
+})
+
 test('a fresh install binds its shortcuts at session start', async ($, on) => {
   const files: Record<string, string> = {}
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -122,7 +186,7 @@ test('a fresh install binds its shortcuts at session start', async ($, on) => {
   })
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   const bindings = JSON.parse(files['/home/test/.claude/keybindings.json'] ?? '{}').bindings?.[0]?.bindings ?? {}
-  expect(Object.keys(bindings)).toEqual(['alt+q', 'alt+t', 'alt+c'])
+  expect(Object.keys(bindings)).toEqual(['alt+q', 'alt+t', 'alt+c', 'alt+s'])
 })
 
 test('a question whose turn ends with no text does not take the next reply', async ($, on) => {
@@ -277,7 +341,7 @@ test('the band and /qa-toggle turn recording off and on', async ($, on) => {
   expect((await run('qa-testme')).text).toMatch(/is off/) // alt+t does nothing while off
   await $.prompt.submit({ text: 'Why is the sky blue?', wait: false, origin: { kind: 'composer' } })
   await run('qa-toggle') // on
-  expect(boundKeys()).toEqual(['alt+q', 'alt+t', 'alt+c'])
+  expect(boundKeys()).toEqual(['alt+q', 'alt+t', 'alt+c', 'alt+s'])
   await $.prompt.submit({ text: 'How do tides work?', wait: false, origin: { kind: 'composer' } })
   const history = await $.ui.mount({
     plugin: 'qa-history',

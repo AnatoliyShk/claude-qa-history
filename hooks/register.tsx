@@ -19,6 +19,11 @@ const isBandHidden = atom({ plugin: 'qa-history', key: 'isBandHidden' } as const
 const TOGGLE_SHORTCUT = 'alt+q' // bound to /qa-toggle in ~/.claude/keybindings.json while on
 const QUIZ_SHORTCUT = 'alt+t' // bound to /qa-testme there
 const CLEAR_SHORTCUT = 'alt+c' // bound to /qa-clear there
+const ASK_SHORTCUT = 'alt+s' // bound to /qa-ask there
+
+// How Ask starts the draft; a prompt starting so is recorded even when it doesn't read as a question.
+const ASK_PREFIX = 'About "'
+const EXPLAIN_PREFIX = 'Explain this: '
 
 // Prompts the person typed (terminal, desktop app, remote); not plugin or task prompts.
 const PERSON_ORIGINS = ['composer', 'sdk', 'bridge']
@@ -174,6 +179,47 @@ function pickOption($: EngineInterface, questionIndex: number, optionIndex: numb
   )
 }
 
+// Adds a question as a card, then merges it under the previous card if it builds on that card's answer.
+async function recordQuestion($: EngineInterface, question: string): Promise<void> {
+  const previousEntry = (await read($, entries)).at(-1)
+  const entry: Entry = { id: crypto.randomUUID(), question, answer: '', followUps: [] }
+  // Added at once and merged after the check, so an answer that lands first is kept.
+  await update($, entries, list => [...list, entry].slice(-100))
+  if (previousEntry !== undefined && previousEntry.answer !== '' && previousEntry.answer !== NO_ANSWER && (await isFollowUp($, previousEntry, question))) {
+    await update($, entries, list => mergedInto(list, previousEntry.id, entry.id))
+  }
+}
+
+// The text the person last selected with the mouse, or undefined when there is none (or the surface reports none).
+async function selectedText($: EngineInterface): Promise<string | undefined> {
+  return (await $.ui.selection())?.text.trim() || undefined
+}
+
+const NO_SELECTION = 'Select some text first.'
+
+// Ask: starts a draft about the selection for the person to finish; it is recorded when they send it.
+async function askAboutSelection($: EngineInterface): Promise<string> {
+  const text = await selectedText($)
+  if (text === undefined) return NO_SELECTION
+  const { isFilled } = await $.prompt.fill({ text: `${ASK_PREFIX}${text}": ` })
+  return isFilled ? 'Type your question about the selection and press Enter.' : 'Could not fill the prompt box.'
+}
+
+// Explain: "Explain this: <selection>", or undefined with nothing selected.
+async function explainQuestion($: EngineInterface): Promise<string | undefined> {
+  const text = await selectedText($)
+  return text === undefined ? undefined : EXPLAIN_PREFIX + text
+}
+
+// A plugin's own prompt skips the person-only recording in prompt.submit, so the card is added here first.
+async function sendExplain($: EngineInterface, question: string): Promise<void> {
+  if (await read($, isEnabled)) await recordQuestion($, question)
+  $.prompt.submit({ text: question, asUser: true }).catch(() => $.ui.toast('Q&A history: could not send the question'))
+}
+
+// /qa-explain's question: its command.run hook holds a turn and may not submit, so turn.complete sends it.
+let queuedExplainQuestion: string | undefined
+
 // Folds or unfolds one answer in the history ('<card id>' or '<card id>:<related index>').
 function toggleAnswer($: EngineInterface, answerId: string) {
   return update($, hiddenAnswerIds, ids => (ids.includes(answerId) ? ids.filter(id => id !== answerId) : [...ids, answerId]))
@@ -184,6 +230,7 @@ const QA_BINDINGS: Record<string, string> = {
   [TOGGLE_SHORTCUT]: 'command:qa-toggle',
   [QUIZ_SHORTCUT]: 'command:qa-testme',
   [CLEAR_SHORTCUT]: 'command:qa-clear',
+  [ASK_SHORTCUT]: 'command:qa-ask',
 }
 type KeybindingsFile = { bindings?: { context?: string; bindings?: Record<string, string> }[] }
 
@@ -303,6 +350,14 @@ export const register: Register = on => {
       description: `Clear the Q&A history; run twice to confirm (${CLEAR_SHORTCUT})`,
     })
     await $.command.register({
+      name: 'qa-ask',
+      description: `Start a question about the text you selected (${ASK_SHORTCUT})`,
+    })
+    await $.command.register({
+      name: 'qa-explain',
+      description: 'Ask Claude to explain the text you selected',
+    })
+    await $.command.register({
       name: 'qa-toggle',
       description: `Turn Q&A history recording on or off (${TOGGLE_SHORTCUT})`,
     })
@@ -345,9 +400,21 @@ export const register: Register = on => {
           onPress={async () => $.ui.toast(await startQuiz($))}
         />
         <Button key="qa-clear" label={isConfirming ? 'Really clear?' : 'Clear'} variant="secondary" hotkey={isOn ? 'c' : undefined} onPress={() => clearHistory($)} />
+        <Button key="qa-ask" label="Ask" variant="secondary" hotkey={isOn ? 'a' : undefined} onPress={async () => $.ui.toast(await askAboutSelection($))} />
+        <Button
+          key="qa-explain"
+          label="Explain"
+          variant="secondary"
+          hotkey={isOn ? 'e' : undefined}
+          onPress={async () => {
+            const question = await explainQuestion($)
+            if (question === undefined) $.ui.toast(NO_SELECTION)
+            else await sendExplain($, question)
+          }}
+        />
         {isConfirming && <Button key="qa-clear-cancel" label="Keep" variant="secondary" onPress={() => update($, isConfirmingClear, () => false)} />}
         {/* keybindings.json chords reach the terminal only; elsewhere q works once the band has the focus */}
-        <Text dimColor>{e.surface === 'terminal' ? (isOn ? `${TOGGLE_SHORTCUT} toggle, ${QUIZ_SHORTCUT} quiz, ${CLEAR_SHORTCUT} clear` : 'shortcuts off') : 'click the band for keyboard control'}</Text>
+        <Text dimColor>{e.surface === 'terminal' ? (isOn ? `${TOGGLE_SHORTCUT} toggle, ${QUIZ_SHORTCUT} quiz, ${CLEAR_SHORTCUT} clear, ${ASK_SHORTCUT} ask` : 'shortcuts off') : 'click the band for keyboard control'}</Text>
         <Box flexGrow={1} />
         {/* plain one-glyph label: drawn as a bare cross */}
         <Button key="qa-band-close" label="✕" plain role="dismiss" onPress={() => update($, isBandHidden, () => true)} />
@@ -359,14 +426,9 @@ export const register: Register = on => {
     const result = await next(e)
     // Any message cancels a pending clear, so a stray press much later can't wipe the history; /qa-clear itself keeps it.
     if (!e.text.trimStart().startsWith('/')) await update($, isConfirmingClear, () => false)
-    if (PERSON_ORIGINS.includes(e.origin.kind) && isQuestion(e.text) && !('drop' in result) && (await read($, isEnabled))) {
-      const previousEntry = (await read($, entries)).at(-1)
-      const entry: Entry = { id: crypto.randomUUID(), question: e.text.trim(), answer: '', followUps: [] }
-      // Added at once and merged after the check, so an answer that lands first is kept.
-      await update($, entries, list => [...list, entry].slice(-100))
-      if (previousEntry !== undefined && previousEntry.answer !== '' && previousEntry.answer !== NO_ANSWER && (await isFollowUp($, previousEntry, entry.question))) {
-        await update($, entries, list => mergedInto(list, previousEntry.id, entry.id))
-      }
+    const isAsked = isQuestion(e.text) || e.text.trimStart().startsWith(ASK_PREFIX)
+    if (PERSON_ORIGINS.includes(e.origin.kind) && isAsked && !('drop' in result) && (await read($, isEnabled))) {
+      await recordQuestion($, e.text.trim())
     }
 
     return result
@@ -388,12 +450,22 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       await update($, entries, list => withAnswer(list, e.answer.trim() || NO_ANSWER))
+      const question = queuedExplainQuestion
+      queuedExplainQuestion = undefined
+      if (question !== undefined) await sendExplain($, question) // after withAnswer, so this turn can't answer its card
     }
 
     return next(e)
   })
 
   on('command.run', { command: 'qa-testme' }, async $ => ({ text: await startQuiz($) }))
+
+  on('command.run', { command: 'qa-ask' }, async $ => ({ text: await askAboutSelection($) }))
+
+  on('command.run', { command: 'qa-explain' }, async $ => {
+    queuedExplainQuestion = await explainQuestion($)
+    return { text: queuedExplainQuestion === undefined ? NO_SELECTION : 'Explaining the selection.' }
+  })
 
   on('command.run', { command: 'qa-clear' }, async $ => ({
     text: (await read($, isEnabled)) ? await clearHistory($) : 'Q&A history is off: turn it on to clear it.',
