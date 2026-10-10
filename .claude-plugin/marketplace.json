@@ -8,7 +8,7 @@
     {
       "name": "qa-history",
       "source": "./",
-      "description": "Keeps your questions, answers and follow-up Q&A in a side pane; /qa-testme quizzes you on the last one"
+      "description": "Keeps your questions, answers and follow-up Q&A in a side pane; /qa-testme quizzes you on all of it"
     }
   ]
 }

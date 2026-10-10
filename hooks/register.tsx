@@ -36,9 +36,10 @@ export function isQuestion(text: string): boolean {
 // also what a skipped AskUserQuestion question is saved with.
 export const NO_ANSWER = '(no answer)'
 
-const QUIZ_PROMPT = `Write a multiple-choice quiz that checks whether the learner understood the conversation below.
+const QUIZ_PROMPT = `Write a multiple-choice quiz that checks whether the learner understood the questions and answers below.
 Reply with JSON only, no code fence: {"items":[{"question":"...","options":["...","...","...","..."],"correct":0}]}
 5 questions, 4 options each, "correct" is the 0-based index of the right option. Vary the position of the right option.
+Spread the quiz over as many of the learner's different questions as you can.
 
 `
 
@@ -75,6 +76,23 @@ function transcriptOf(entry: Entry): string {
     .map(related => `Learner then asked: ${related.question}\n${followUpsText(related.followUps ?? [])}\nAnswer given: ${related.answer}`)
     .join('\n')
   return `Learner asked: ${entry.question}\n${followUps}\nAnswer given: ${entry.answer}\n${relatedQuestions}`
+}
+
+// shortcut: only the newest cards that fit in this many characters go to the model, so a long history loses its oldest
+// cards first; raise it, or summarize old cards, if quizzes should reach back further.
+const QUIZ_TRANSCRIPT_LIMIT = 60_000
+
+// The answered cards for the quiz, newest kept first when the history is too long; oldest first in the text.
+export function quizTranscript(list: Entry[]): { transcript: string; questionCount: number } {
+  let transcript = ''
+  let questionCount = 0
+  for (const entry of list.filter(entry => entry.answer !== '' && entry.answer !== NO_ANSWER).toReversed()) {
+    const entryText = transcriptOf(entry).slice(0, QUIZ_TRANSCRIPT_LIMIT) // so even one huge card fits
+    if (transcript.length + entryText.length > QUIZ_TRANSCRIPT_LIMIT) break
+    transcript = `${entryText}\n\n${transcript}`
+    questionCount += 1
+  }
+  return { transcript, questionCount }
 }
 
 // Changes the newest question still waiting for its answer: the last card's own, else its newest related one.
@@ -224,11 +242,11 @@ async function clearHistory($: EngineInterface): Promise<string> {
   return 'Q&A history cleared.'
 }
 
-// Quizzes the person on the last answered question; resolves the line to show. Off: refuses, so alt+t does nothing.
+// Quizzes the person on the whole Q&A history; resolves the line to show. Off: refuses, so alt+t does nothing.
 async function startQuiz($: EngineInterface): Promise<string> {
   if (!(await read($, isEnabled))) return 'Q&A history is off: turn it on to take a quiz.'
-  const lastEntry = (await read($, entries)).findLast(entry => entry.answer !== '' && entry.answer !== NO_ANSWER)
-  if (lastEntry === undefined) return 'Nothing to test yet: ask a question first.'
+  const { transcript, questionCount } = quizTranscript(await read($, entries))
+  if (questionCount === 0) return 'Nothing to test yet: ask a question first.'
 
   await update($, quiz, () => null)
   await update($, quizStatus, () => 'Writing your quiz…')
@@ -236,7 +254,7 @@ async function startQuiz($: EngineInterface): Promise<string> {
 
   const completion = await $.model.complete({
     model: 'haiku',
-    prompt: QUIZ_PROMPT + transcriptOf(lastEntry),
+    prompt: QUIZ_PROMPT + transcript,
     maxTokens: 2048,
   })
   let items: QuizItem[] = []
@@ -251,18 +269,18 @@ async function startQuiz($: EngineInterface): Promise<string> {
     await update($, quizStatus, () => 'Could not write a quiz. Run /qa-testme again.')
     return 'The quiz could not be written.'
   }
-  const newQuiz: Quiz = { topic: lastEntry.question, items, picks: [] }
+  const newQuiz: Quiz = { items, picks: [] }
   await update($, quiz, () => newQuiz)
   await update($, quizStatus, () => '')
 
-  return `Quiz on "${lastEntry.question.slice(0, 80)}" opened.`
+  return `Quiz on ${questionCount === 1 ? 'your 1 question' : `your ${questionCount} questions`} opened.`
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'qa-testme',
-      description: 'Quiz yourself on your last question and get rated',
+      description: 'Quiz yourself on your whole Q&A history and get rated',
     })
     await $.command.register({
       name: 'qa-history',

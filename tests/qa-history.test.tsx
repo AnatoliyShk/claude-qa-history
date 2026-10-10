@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isQuestion, mergedInto, parseQuizItems, rating, withAnswer, withFollowUps, withQaBindings } from '../hooks/register'
+import { isQuestion, mergedInto, parseQuizItems, quizTranscript, rating, withAnswer, withFollowUps, withQaBindings } from '../hooks/register'
 
 const paneProps = (title: string) => ({
   title,
@@ -86,6 +86,24 @@ test('what Claude asks back lands on the waiting question, merged or not', () =>
   expect(withFollowUps([original], asked)).toEqual([original])
 })
 
+test('a long history is cut to its newest cards for the quiz', () => {
+  const card = (id: string, answer: string) => ({ id, question: `Q ${id}?`, answer, followUps: [] })
+  const longAnswer = 'x'.repeat(25_000)
+  const { transcript, questionCount } = quizTranscript([
+    card('old', longAnswer),
+    card('skipped', '(no answer)'),
+    card('mid', longAnswer),
+    card('new', longAnswer),
+  ])
+  expect(questionCount).toBe(2) // a third 25k card would pass 60k
+  expect(transcript).toMatch(/Q mid\?[\s\S]*Q new\?/)
+  expect(transcript).not.toMatch(/Q old|Q skipped/)
+  const hugeCard = quizTranscript([card('huge', 'x'.repeat(90_000))])
+  expect(hugeCard.questionCount).toBe(1) // one card always goes, cut to the limit
+  expect(hugeCard.transcript.length).toBeLessThanOrEqual(60_002)
+  expect(quizTranscript([card('waiting', '')]).questionCount).toBe(0)
+})
+
 test('a fresh install binds its shortcuts at session start', async ($, on) => {
   const files: Record<string, string> = {}
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -128,13 +146,17 @@ test('records a question with its answer and quizzes on it', async ($, on) => {
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
   on('model.classify', (_$, e) => ({ value: e.text.includes('New question: Is it fast') ? 'follow-up' : 'new-topic' }))
-  on('model.complete', () => ({
+  const quizPrompts: string[] = []
+  on('model.complete', (_$, e) => {
+    quizPrompts.push(e.prompt)
+    return {
     value: {
       isAnswered: true as const,
       text: QUIZ_JSON,
       usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
     },
-  }))
+    }
+  })
 
   await $.prompt.submit({ text: 'Add a margin', wait: false, origin: { kind: 'composer' } })
   await $.prompt.submit({ text: 'How does a closure work?', wait: false, origin: { kind: 'composer' } })
@@ -182,6 +204,8 @@ test('records a question with its answer and quizzes on it', async ($, on) => {
       origin: { kind: 'composer' },
       presentation: { isFullscreen: true, columns: 160 },
     })
+    // the whole history, follow-ups included, not just the last card
+    expect(quizPrompts.at(-1)).toMatch(/closure[\s\S]*Is it fast[\s\S]*Rust/)
     const quizPane = await $.ui.mount({
       plugin: 'qa-history',
       surface,

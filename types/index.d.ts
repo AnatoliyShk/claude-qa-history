@@ -10,7 +10,7 @@ export type Entry = {
   relatedQuestions?: RelatedQuestion[]
 }
 export type QuizItem = { question: string; options: string[]; correct: number }
-export type Quiz = { topic: string; items: QuizItem[]; picks: number[] }
+export type Quiz = { items: QuizItem[]; picks: number[] }
 
 declare module 'claude-code' {
   interface PluginState {
