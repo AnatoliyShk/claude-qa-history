@@ -3,7 +3,7 @@
 A Claude Code plugin that keeps your questions and Claude's answers in a side pane, and quizzes you on all of it.
 
 - **History pane:** every prompt you type that ends with *?* or starts with a question word (*how, what, why, which, can, does, should*…) becomes a card with Claude's answer. A follow-up that builds on the previous answer is grouped under that card. Click a question to fold its answer.
-- **Quiz:** `/qa-testme` writes a 5-question multiple-choice quiz spread over your whole history (using Haiku) and rates your score.
+- **Quiz:** `/qa-testme` writes a multiple-choice quiz on your whole history (using Haiku): 3 quiz questions for each question you asked, 60 at most and rates your score.
 - **Band above the prompt:** turn recording on or off, start a quiz, or clear the history. The ✕ hides it until you run `/qa-history`.
 
 ## Install

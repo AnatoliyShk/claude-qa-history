@@ -36,12 +36,22 @@ export function isQuestion(text: string): boolean {
 // also what a skipped AskUserQuestion question is saved with.
 export const NO_ANSWER = '(no answer)'
 
-const QUIZ_PROMPT = `Write a multiple-choice quiz that checks whether the learner understood the questions and answers below.
+const QUIZ_ITEMS_PER_QUESTION = 3
+const QUIZ_ITEMS_MAX = 60
+const QUIZ_TOKENS_PER_ITEM = 250 // room for one quiz question with its 4 options in the JSON reply
+
+export function quizItemCount(questionCount: number): number {
+  return Math.min(QUIZ_ITEMS_MAX, questionCount * QUIZ_ITEMS_PER_QUESTION)
+}
+
+function quizPrompt(itemCount: number): string {
+  return `Write a multiple-choice quiz that checks whether the learner understood the questions and answers below.
 Reply with JSON only, no code fence: {"items":[{"question":"...","options":["...","...","...","..."],"correct":0}]}
-5 questions, 4 options each, "correct" is the 0-based index of the right option. Vary the position of the right option.
-Spread the quiz over as many of the learner's different questions as you can.
+${itemCount} questions, 4 options each, "correct" is the 0-based index of the right option. Vary the position of the right option.
+Cover every one of the learner's questions as evenly as you can, about ${QUIZ_ITEMS_PER_QUESTION} quiz questions for each.
 
 `
+}
 
 export function rating(score: number, total: number): string {
   const ratio = total === 0 ? 0 : score / total
@@ -83,6 +93,7 @@ function transcriptOf(entry: Entry): string {
 const QUIZ_TRANSCRIPT_LIMIT = 60_000
 
 // The answered cards for the quiz, newest kept first when the history is too long; oldest first in the text.
+// questionCount: the person's questions in it, a card's own and its related ones.
 export function quizTranscript(list: Entry[]): { transcript: string; questionCount: number } {
   let transcript = ''
   let questionCount = 0
@@ -90,7 +101,7 @@ export function quizTranscript(list: Entry[]): { transcript: string; questionCou
     const entryText = transcriptOf(entry).slice(0, QUIZ_TRANSCRIPT_LIMIT) // so even one huge card fits
     if (transcript.length + entryText.length > QUIZ_TRANSCRIPT_LIMIT) break
     transcript = `${entryText}\n\n${transcript}`
-    questionCount += 1
+    questionCount += 1 + (entry.relatedQuestions ?? []).length
   }
   return { transcript, questionCount }
 }
@@ -252,10 +263,11 @@ async function startQuiz($: EngineInterface): Promise<string> {
   await update($, quizStatus, () => 'Writing your quiz…')
   await $.ui.open({ id: QUIZ_PANE, title: 'Test me', focus: true, closeOnEscape: true })
 
+  const itemCount = quizItemCount(questionCount)
   const completion = await $.model.complete({
     model: 'haiku',
-    prompt: QUIZ_PROMPT + transcript,
-    maxTokens: 2048,
+    prompt: quizPrompt(itemCount) + transcript,
+    maxTokens: Math.max(2048, itemCount * QUIZ_TOKENS_PER_ITEM),
   })
   let items: QuizItem[] = []
   if (completion.isAnswered) {
@@ -273,7 +285,7 @@ async function startQuiz($: EngineInterface): Promise<string> {
   await update($, quiz, () => newQuiz)
   await update($, quizStatus, () => '')
 
-  return `Quiz on ${questionCount === 1 ? 'your 1 question' : `your ${questionCount} questions`} opened.`
+  return `Quiz of ${items.length} on ${questionCount === 1 ? 'your 1 question' : `your ${questionCount} questions`} opened.`
 }
 
 export const register: Register = on => {

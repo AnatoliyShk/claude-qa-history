@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isQuestion, mergedInto, parseQuizItems, quizTranscript, rating, withAnswer, withFollowUps, withQaBindings } from '../hooks/register'
+import { isQuestion, mergedInto, parseQuizItems, quizItemCount, quizTranscript, rating, withAnswer, withFollowUps, withQaBindings } from '../hooks/register'
 
 const paneProps = (title: string) => ({
   title,
@@ -102,6 +102,9 @@ test('a long history is cut to its newest cards for the quiz', () => {
   expect(hugeCard.questionCount).toBe(1) // one card always goes, cut to the limit
   expect(hugeCard.transcript.length).toBeLessThanOrEqual(60_002)
   expect(quizTranscript([card('waiting', '')]).questionCount).toBe(0)
+  expect(quizItemCount(1)).toBe(3)
+  expect(quizItemCount(20)).toBe(60)
+  expect(quizItemCount(25)).toBe(60) // capped
 })
 
 test('a fresh install binds its shortcuts at session start', async ($, on) => {
@@ -206,6 +209,7 @@ test('records a question with its answer and quizzes on it', async ($, on) => {
     })
     // the whole history, follow-ups included, not just the last card
     expect(quizPrompts.at(-1)).toMatch(/closure[\s\S]*Is it fast[\s\S]*Rust/)
+    expect(quizPrompts.at(-1)).toMatch(/^9 questions/m) // 3 questions (one a merged follow-up), 3 each
     const quizPane = await $.ui.mount({
       plugin: 'qa-history',
       surface,
